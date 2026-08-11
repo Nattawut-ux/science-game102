@@ -1,0 +1,1152 @@
+<!DOCTYPE html>
+<html lang="th" class="h-full bg-slate-900">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Plant Growth Lab AR - เกมวิทยาศาตร์ WebAR การเติบโตของพืช</title>
+  
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            brandGreen: '#10b981',
+            brandBlue: '#06b6d4',
+            brandYellow: '#f59e0b',
+            glassBg: 'rgba(15, 23, 42, 0.75)',
+            glassBorder: 'rgba(255, 255, 255, 0.15)'
+          },
+          fontFamily: {
+            kanit: ['Kanit', 'sans-serif']
+          }
+        }
+      }
+    }
+  </script>
+
+  <!-- Google Fonts: Kanit -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+  <!-- FontAwesome Icons -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+  <!-- MediaPipe Library CDNs -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
+
+  <!-- Custom Styles & Animations -->
+  <style>
+    body {
+      font-family: 'Kanit', sans-serif;
+      overflow: hidden;
+      user-select: none;
+    }
+    .glass-panel {
+      background: rgba(15, 23, 42, 0.75);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+    }
+    .glass-pill {
+      background: rgba(255, 255, 255, 0.1);
+      backdrop-filter: blur(8px);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+    }
+    .neon-border-green {
+      box-shadow: 0 0 15px rgba(16, 185, 129, 0.5);
+    }
+    .neon-border-blue {
+      box-shadow: 0 0 15px rgba(6, 182, 212, 0.5);
+    }
+    .neon-border-yellow {
+      box-shadow: 0 0 15px rgba(245, 158, 11, 0.5);
+    }
+    .mirror-canvas {
+      transform: scaleX(-1);
+    }
+  </style>
+</head>
+
+<body class="h-full text-slate-100 flex flex-col justify-between relative overflow-hidden bg-slate-950">
+
+  <!-- Hidden video stream for MediaPipe processing -->
+  <video id="webcam" class="hidden" playsinline muted></video>
+
+  <!-- Main Game Canvas Container -->
+  <div class="absolute inset-0 z-0">
+    <canvas id="arCanvas" class="w-full h-full object-cover mirror-canvas"></canvas>
+  </div>
+
+  <!-- Top Bar HUD -->
+  <header class="relative z-10 p-4 flex justify-between items-center max-w-7xl mx-auto w-full">
+    <!-- Game Title & FPS -->
+    <div class="glass-panel rounded-2xl p-3 px-5 flex items-center gap-4">
+      <div class="bg-emerald-500/20 text-emerald-400 p-2.5 rounded-xl border border-emerald-500/30">
+        <i class="fa-solid fa-leaf text-2xl animate-pulse"></i>
+      </div>
+      <div>
+        <h1 class="text-lg font-bold bg-gradient-to-r from-emerald-400 to-cyan-400 bg-clip-text text-transparent">
+          Plant Growth AR Lab
+        </h1>
+        <div class="flex items-center gap-3 text-xs text-slate-400">
+          <span id="fpsCounter" class="font-mono text-emerald-400"><i class="fa-solid fa-gauge"></i> FPS: 60</span>
+          <span id="modeBadge" class="bg-emerald-950 text-emerald-400 px-2 py-0.5 rounded-full border border-emerald-800">
+            <i class="fa-solid fa-camera"></i> Face Tracking
+          </span>
+          <button id="btnAudioToggle" class="bg-indigo-950/80 hover:bg-indigo-900 text-indigo-300 px-2.5 py-0.5 rounded-full border border-indigo-700/50 transition flex items-center gap-1.5 cursor-pointer">
+            <i id="audioIcon" class="fa-solid fa-volume-high text-indigo-400"></i>
+            <span id="audioText">เปิดเสียง</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Stage Info & Score Display -->
+    <div class="flex gap-3">
+      <div class="glass-panel rounded-2xl px-5 py-2.5 text-center min-w-[110px]">
+        <div class="text-xs text-slate-400 font-medium">คะแนนรวม</div>
+        <div id="scoreDisplay" class="text-2xl font-black text-amber-400">0</div>
+      </div>
+      
+      <div class="glass-panel rounded-2xl px-5 py-2.5 text-center min-w-[110px]">
+        <div class="text-xs text-slate-400 font-medium">คอมโบ</div>
+        <div id="comboDisplay" class="text-2xl font-black text-cyan-400">x1</div>
+      </div>
+
+      <div class="glass-panel rounded-2xl px-5 py-2.5 text-center min-w-[110px]">
+        <div class="text-xs text-slate-400 font-medium">เวลา</div>
+        <div id="timerDisplay" class="text-2xl font-black text-slate-200">00:00</div>
+      </div>
+    </div>
+  </header>
+
+  <!-- Middle Overlay Section -->
+  <main class="relative z-10 flex-1 flex flex-col justify-between p-4 max-w-7xl mx-auto w-full pointer-events-none">
+    
+    <!-- Stage Banner -->
+    <div class="self-center glass-panel rounded-full px-6 py-2.5 flex items-center gap-3 pointer-events-auto shadow-lg border border-slate-700/50">
+      <span class="bg-indigo-600 text-white text-xs font-bold px-3 py-1 rounded-full uppercase tracking-wider" id="stageBadge">
+        ด่านที่ 1
+      </span>
+      <span id="stageTitle" class="font-semibold text-sm sm:text-base text-slate-100">
+        การเติมน้ำเพื่อการเจริญเติบโต (Hydration)
+      </span>
+    </div>
+
+    <!-- Science Hint Box -->
+    <div id="hintBox" class="self-center glass-panel rounded-2xl px-6 py-3 max-w-md text-center pointer-events-auto transition-all duration-300 border-amber-500/30">
+      <div id="hintIcon" class="text-amber-400 text-xl mb-1"><i class="fa-solid fa-lightbulb animate-bounce"></i></div>
+      <p id="hintText" class="text-xs sm:text-sm text-slate-200 font-light">
+        หันหน้าไปทาง<span class="text-cyan-400 font-bold">ซ้าย</span> เพื่อรดน้ำให้แก่ต้นไม้
+      </p>
+    </div>
+
+    <!-- Stage Clear Notification Banner Overlay -->
+    <div id="stageClearBanner" class="self-center glass-panel rounded-3xl px-8 py-5 max-w-lg text-center pointer-events-auto transition-all duration-500 scale-0 opacity-0 border-2 border-emerald-400 shadow-2xl bg-emerald-950/80 my-auto">
+      <div class="text-4xl mb-1">🎉</div>
+      <h3 class="text-2xl font-black text-emerald-300 mb-1" id="stageClearTitle">ผ่านด่านที่ 1 แล้ว!</h3>
+      <p class="text-xs text-slate-200" id="stageClearDesc">คุณเติมน้ำให้พืชจนได้รับความชุ่มชื้นเพียงพอแล้ว!</p>
+    </div>
+
+    <!-- Side Indicators (Water & Sunlight Gauges) -->
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 w-full my-auto pointer-events-auto">
+      
+      <!-- Water Meter -->
+      <div class="glass-panel rounded-2xl p-4 flex flex-col gap-2 max-w-xs transition-all duration-300" id="waterCard">
+        <div class="flex justify-between items-center">
+          <span class="text-sm font-semibold text-cyan-400 flex items-center gap-2">
+            <i class="fa-solid fa-droplet text-cyan-400"></i> ระดับน้ำ (Water Level)
+          </span>
+          <span id="waterValue" class="text-xs font-bold font-mono text-cyan-300">30%</span>
+        </div>
+        <div class="w-full bg-slate-800/80 rounded-full h-3.5 overflow-hidden p-0.5 border border-slate-700 relative">
+          <div class="absolute left-[40%] right-[20%] top-0 bottom-0 bg-emerald-500/20 border-x border-emerald-400/50 pointer-events-none z-10" title="Optimal Zone"></div>
+          <div id="waterBar" class="bg-gradient-to-r from-blue-500 to-cyan-400 h-full rounded-full transition-all duration-150 relative z-0" style="width: 30%"></div>
+        </div>
+        <div class="text-[11px] text-slate-400 flex justify-between">
+          <span>หันซ้าย = เพิ่มน้ำ</span>
+          <span id="waterStatus" class="text-emerald-400 font-medium">โซนเหมาะสม (40-80%)</span>
+        </div>
+      </div>
+
+      <!-- Sunlight Meter -->
+      <div class="glass-panel rounded-2xl p-4 flex flex-col gap-2 max-w-xs justify-self-end transition-all duration-300" id="sunCard">
+        <div class="flex justify-between items-center">
+          <span class="text-sm font-semibold text-amber-400 flex items-center gap-2">
+            <i class="fa-solid fa-sun text-amber-400"></i> ระดับแสงแดด (Sunlight)
+          </span>
+          <span id="sunValue" class="text-xs font-bold font-mono text-amber-300">30%</span>
+        </div>
+        <div class="w-full bg-slate-800/80 rounded-full h-3.5 overflow-hidden p-0.5 border border-slate-700 relative">
+          <div class="absolute left-[40%] right-[20%] top-0 bottom-0 bg-emerald-500/20 border-x border-emerald-400/50 pointer-events-none z-10" title="Optimal Zone"></div>
+          <div id="sunBar" class="bg-gradient-to-r from-amber-500 to-yellow-300 h-full rounded-full transition-all duration-150 relative z-0" style="width: 30%"></div>
+        </div>
+        <div class="text-[11px] text-slate-400 flex justify-between">
+          <span>หันขวา = เพิ่มแสง</span>
+          <span id="sunStatus" class="text-emerald-400 font-medium">โซนเหมาะสม (40-80%)</span>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Plant Growth Progress Gauge -->
+    <div class="glass-panel rounded-2xl p-4 max-w-2xl mx-auto w-full pointer-events-auto border-emerald-500/30 mb-2">
+      <div class="flex justify-between items-center mb-1.5">
+        <span class="text-sm font-bold text-emerald-400 flex items-center gap-2">
+          <i class="fa-solid fa-seedling"></i> การเติบโตของพืช (Plant Growth Progress)
+        </span>
+        <span id="growthValue" class="text-base font-extrabold font-mono text-emerald-300">0%</span>
+      </div>
+      <div class="w-full bg-slate-900/90 rounded-full h-5 overflow-hidden p-1 border border-slate-700 shadow-inner">
+        <div id="growthBar" class="bg-gradient-to-r from-emerald-600 via-teal-400 to-green-300 h-full rounded-full transition-all duration-200" style="width: 0%"></div>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- Bottom HUD & Controls -->
+  <footer class="relative z-10 p-4 max-w-7xl mx-auto w-full">
+    <div class="glass-panel rounded-2xl p-3 flex flex-col sm:flex-row justify-between items-center gap-4">
+      
+      <div class="flex items-center gap-3">
+        <span class="text-xs text-slate-400">สถานะการตรวจจับ:</span>
+        <div id="directionIndicator" class="glass-pill px-4 py-1.5 rounded-full text-xs font-semibold text-emerald-400 flex items-center gap-2">
+          <i class="fa-solid fa-user-check"></i> <span id="directionText">หน้าตรง (หยุดพัก)</span>
+        </div>
+      </div>
+
+      <div class="flex items-center gap-2">
+        <button id="btnLeft" class="glass-pill hover:bg-cyan-500/20 text-cyan-300 px-4 py-2 rounded-xl text-xs font-medium transition active:scale-95 flex items-center gap-1.5 border border-cyan-500/30">
+          <i class="fa-solid fa-arrow-left"></i> หันซ้าย (รดน้ำ)
+        </button>
+        <button id="btnCenter" class="glass-pill hover:bg-slate-700/50 text-slate-200 px-3 py-2 rounded-xl text-xs font-medium transition active:scale-95 border border-slate-600">
+          พักหน้าตรง
+        </button>
+        <button id="btnRight" class="glass-pill hover:bg-amber-500/20 text-amber-300 px-4 py-2 rounded-xl text-xs font-medium transition active:scale-95 flex items-center gap-1.5 border border-amber-500/30">
+          หันขวา (ส่องแสง) <i class="fa-solid fa-arrow-right"></i>
+        </button>
+      </div>
+
+    </div>
+  </footer>
+
+  <!-- Welcome / Start Game Modal -->
+  <div id="startModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md">
+    <div class="glass-panel max-w-lg w-full rounded-3xl p-6 sm:p-8 text-center border border-emerald-500/30 shadow-2xl relative overflow-hidden">
+      <div class="w-20 h-20 bg-emerald-500/20 rounded-full flex items-center justify-center mx-auto mb-4 border border-emerald-500/40 text-emerald-400 text-3xl animate-bounce">
+        <i class="fa-solid fa-flask"></i>
+      </div>
+      <h2 class="text-2xl sm:text-3xl font-extrabold text-white mb-2">Plant Growth WebAR Lab</h2>
+      <p class="text-sm text-slate-300 mb-6 font-light leading-relaxed">
+        เรียนรู้ความสำคัญของ <span class="text-cyan-400 font-semibold">น้ำ</span> และ <span class="text-amber-400 font-semibold">แสงแดด</span> ที่มีต่อการสังเคราะห์ด้วยแสงและการเจริญเติบโตของพืชผ่านระบบตรวจจับการหันใบหน้า (Face Mesh AR)
+      </p>
+
+      <div class="grid grid-cols-3 gap-3 mb-6 text-left text-xs bg-slate-900/60 p-3 rounded-2xl border border-slate-800">
+        <div class="flex flex-col items-center text-center p-2">
+          <i class="fa-solid fa-arrow-left text-cyan-400 text-lg mb-1"></i>
+          <span class="font-bold text-slate-200">หันหน้าซ้าย</span>
+          <span class="text-slate-400 text-[10px]">ป้อนน้ำแก่พืช</span>
+        </div>
+        <div class="flex flex-col items-center text-center p-2 border-x border-slate-800">
+          <i class="fa-solid fa-arrows-to-dot text-emerald-400 text-lg mb-1"></i>
+          <span class="font-bold text-slate-200">ตั้งหน้าตรง</span>
+          <span class="text-slate-400 text-[10px]">รักษาสมดุล</span>
+        </div>
+        <div class="flex flex-col items-center text-center p-2">
+          <i class="fa-solid fa-arrow-right text-amber-400 text-lg mb-1"></i>
+          <span class="font-bold text-slate-200">หันหน้าขวา</span>
+          <span class="text-slate-400 text-[10px]">ป้อนแสงแดด</span>
+        </div>
+      </div>
+
+      <button id="startBtn" class="w-full bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-white font-bold py-3.5 px-6 rounded-2xl shadow-lg transform transition active:scale-95 text-base border border-emerald-400/40 cursor-pointer">
+        <i class="fa-solid fa-play mr-2"></i> เริ่มต้นการทดลอง WebAR
+      </button>
+    </div>
+  </div>
+
+  <!-- End Game / Summary Modal -->
+  <div id="endModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-lg hidden">
+    <div class="glass-panel max-w-md w-full rounded-3xl p-6 sm:p-8 text-center border border-amber-500/40 shadow-2xl relative overflow-hidden">
+      <div class="text-5xl mb-2 animate-bounce">🎉</div>
+      <h2 class="text-3xl font-black text-white mb-1">Congratulations!</h2>
+      <div class="text-amber-400 font-bold text-lg mb-4">🏆 All Clear Complete!</div>
+
+      <div id="starsContainer" class="flex justify-center gap-2 text-3xl text-amber-400 mb-6">
+        <i class="fa-solid fa-star"></i>
+        <i class="fa-solid fa-star"></i>
+        <i class="fa-solid fa-star"></i>
+      </div>
+
+      <div class="bg-slate-900/80 rounded-2xl p-4 mb-6 text-sm flex flex-col gap-2.5 border border-slate-800">
+        <div class="flex justify-between text-slate-300">
+          <span>คะแนนรวมทั้งหมด:</span>
+          <span id="finalScore" class="font-bold text-amber-400 font-mono">0</span>
+        </div>
+        <div class="flex justify-between text-slate-300">
+          <span>เวลารวมที่ใช้:</span>
+          <span id="finalTime" class="font-bold text-cyan-400 font-mono">00:00</span>
+        </div>
+        <div class="flex justify-between text-slate-300">
+          <span>สถานะพืช:</span>
+          <span class="font-bold text-emerald-400">เจริญเติบโตสมบูรณ์แบบ 🌱✨</span>
+        </div>
+      </div>
+
+      <div class="text-xs text-slate-400 bg-emerald-950/40 p-3 rounded-xl border border-emerald-800/40 mb-6 text-left">
+        <div class="font-bold text-emerald-300 mb-1"><i class="fa-solid fa-book-bookmark"></i> บทสรุปวิทยาศาสตร์:</div>
+        พืชใช้ <span class="text-cyan-300">น้ำ</span> และ <span class="text-amber-300">แสงแดด</span> ในกระบวนการสังเคราะห์ด้วยแสง (Photosynthesis) เพื่อสร้างอาหาร หากได้รับทั้งสองปัจจัยในปริมาณที่เหมาะสม พืชจะเจริญเติบโตอย่างสมบูรณ์
+      </div>
+
+      <button id="restartBtn" class="w-full bg-gradient-to-r from-emerald-500 to-cyan-500 hover:from-emerald-400 hover:to-cyan-400 text-slate-950 font-bold py-3.5 px-6 rounded-2xl shadow-lg transform transition active:scale-95 text-base cursor-pointer">
+        <i class="fa-solid fa-rotate-right mr-2"></i> เล่นใหม่อีกครั้ง
+      </button>
+    </div>
+  </div>
+
+  <script>
+    // --- Canvas & Video Setup ---
+    const canvas = document.getElementById('arCanvas');
+    const ctx = canvas.getContext('2d');
+    const videoElement = document.getElementById('webcam');
+
+    function resizeCanvas() {
+      if (canvas && canvas.parentElement) {
+        canvas.width = canvas.parentElement.clientWidth || window.innerWidth;
+        canvas.height = canvas.parentElement.clientHeight || window.innerHeight;
+      }
+    }
+    window.addEventListener('resize', resizeCanvas);
+    resizeCanvas();
+
+    // --- State Variables ---
+    let frameCount = 0;
+    let lastFrameTime = performance.now();
+    let fps = 60;
+    let latestFaceLandmarks = null;
+    let manualOverride = false;
+    let manualAction = 'CENTER';
+    let currentAction = 'CENTER';
+    let hasCameraAccess = false;
+
+    let currentStageIndex = 0;
+    let score = 0;
+    let combo = 1;
+    let comboTimer = 0;
+    let gameTimeSeconds = 0;
+    let gameTimerInterval = null;
+    let isGameRunning = false;
+    let isStageTransitioning = false;
+
+    let waterLevel = 30;
+    let sunLevel = 30;
+    let plantGrowth = 0;
+
+    let pests = [];
+    let pestSpawnTimer = 0;
+    let particles = [];
+
+    // Particle Effect Class
+    class Particle {
+      constructor(x, y, type) {
+        this.x = x;
+        this.y = y;
+        this.type = type;
+        this.vx = (Math.random() - 0.5) * 2;
+        this.vy = type === 'WATER' ? Math.random() * 3 + 2 : (Math.random() - 0.5) * 2 - 1;
+        this.life = 1.0;
+        this.decay = Math.random() * 0.03 + 0.015;
+        this.size = Math.random() * 6 + 4;
+      }
+
+      update() {
+        this.x += this.vx;
+        this.y += this.vy;
+        this.life -= this.decay;
+      }
+
+      draw(context) {
+        if (this.life <= 0) return;
+        context.save();
+        context.globalAlpha = Math.max(0, this.life);
+        if (this.type === 'WATER') {
+          context.fillStyle = '#38bdf8';
+          context.beginPath();
+          context.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+          context.fill();
+        } else if (this.type === 'SUN') {
+          context.fillStyle = '#facc15';
+          context.beginPath();
+          context.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+          context.fill();
+        } else {
+          context.fillStyle = '#34d399';
+          context.beginPath();
+          context.arc(this.x, this.y, this.size * 0.7, 0, Math.PI * 2);
+          context.fill();
+        }
+        context.restore();
+      }
+    }
+
+    // --- Web Audio Synthesizer Engine ---
+    class SoundEngine {
+      constructor() {
+        this.ctx = null;
+        this.isMuted = false;
+        this.bgmTimer = null;
+        this.noteIndex = 0;
+        this.melody = [261.63, 329.63, 392.00, 523.25, 440.00, 349.23, 392.00, 293.66];
+      }
+
+      init() {
+        if (!this.ctx) {
+          const AudioContext = window.AudioContext || window.webkitAudioContext;
+          this.ctx = new AudioContext();
+        }
+        if (this.ctx && this.ctx.state === 'suspended') {
+          this.ctx.resume();
+        }
+      }
+
+      playBGM() {
+        if (this.bgmTimer || this.isMuted) return;
+        this.init();
+        this.bgmTimer = setInterval(() => {
+          if (this.isMuted || !this.ctx) return;
+          try {
+            const osc = this.ctx.createOscillator();
+            const gain = this.ctx.createGain();
+            
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(this.melody[this.noteIndex], this.ctx.currentTime);
+            
+            gain.gain.setValueAtTime(0.03, this.ctx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.35);
+
+            osc.connect(gain);
+            gain.connect(this.ctx.destination);
+
+            osc.start();
+            osc.stop(this.ctx.currentTime + 0.35);
+
+            this.noteIndex = (this.noteIndex + 1) % this.melody.length;
+          } catch(e) {}
+        }, 450);
+      }
+
+      stopBGM() {
+        if (this.bgmTimer) {
+          clearInterval(this.bgmTimer);
+          this.bgmTimer = null;
+        }
+      }
+
+      playWaterSFX() {
+        if (this.isMuted) return;
+        this.init();
+        try {
+          const osc = this.ctx.createOscillator();
+          const gain = this.ctx.createGain();
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(600, this.ctx.currentTime);
+          osc.frequency.exponentialRampToValueAtTime(200, this.ctx.currentTime + 0.12);
+
+          gain.gain.setValueAtTime(0.06, this.ctx.currentTime);
+          gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.12);
+
+          osc.connect(gain);
+          gain.connect(this.ctx.destination);
+          osc.start();
+          osc.stop(this.ctx.currentTime + 0.12);
+        } catch(e) {}
+      }
+
+      playSunSFX() {
+        if (this.isMuted) return;
+        this.init();
+        try {
+          const osc = this.ctx.createOscillator();
+          const gain = this.ctx.createGain();
+          osc.type = 'triangle';
+          osc.frequency.setValueAtTime(523.25, this.ctx.currentTime);
+          osc.frequency.setValueAtTime(659.25, this.ctx.currentTime + 0.08);
+
+          gain.gain.setValueAtTime(0.05, this.ctx.currentTime);
+          gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.15);
+
+          osc.connect(gain);
+          gain.connect(this.ctx.destination);
+          osc.start();
+          osc.stop(this.ctx.currentTime + 0.15);
+        } catch(e) {}
+      }
+
+      playZapSFX() {
+        if (this.isMuted) return;
+        this.init();
+        try {
+          const osc = this.ctx.createOscillator();
+          const gain = this.ctx.createGain();
+          osc.type = 'sawtooth';
+          osc.frequency.setValueAtTime(800, this.ctx.currentTime);
+          osc.frequency.linearRampToValueAtTime(100, this.ctx.currentTime + 0.1);
+
+          gain.gain.setValueAtTime(0.08, this.ctx.currentTime);
+          gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.1);
+
+          osc.connect(gain);
+          gain.connect(this.ctx.destination);
+          osc.start();
+          osc.stop(this.ctx.currentTime + 0.1);
+        } catch(e) {}
+      }
+
+      playFanfare() {
+        if (this.isMuted) return;
+        this.init();
+        const notes = [523.25, 659.25, 783.99, 1046.50];
+        notes.forEach((freq, idx) => {
+          setTimeout(() => {
+            try {
+              const osc = this.ctx.createOscillator();
+              const gain = this.ctx.createGain();
+              osc.type = 'triangle';
+              osc.frequency.setValueAtTime(freq, this.ctx.currentTime);
+              gain.gain.setValueAtTime(0.1, this.ctx.currentTime);
+              gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.28);
+              osc.connect(gain);
+              gain.connect(this.ctx.destination);
+              osc.start();
+              osc.stop(this.ctx.currentTime + 0.28);
+            } catch(e) {}
+          }, idx * 100);
+        });
+      }
+
+      toggleMute() {
+        this.isMuted = !this.isMuted;
+        if (this.isMuted) {
+          this.stopBGM();
+        } else if (isGameRunning) {
+          this.playBGM();
+        }
+        return this.isMuted;
+      }
+    }
+
+    const audioSys = new SoundEngine();
+
+    document.getElementById('btnAudioToggle').addEventListener('click', () => {
+      const muted = audioSys.toggleMute();
+      document.getElementById('audioIcon').className = muted ? 'fa-solid fa-volume-xmark text-rose-400' : 'fa-solid fa-volume-high text-indigo-400';
+      document.getElementById('audioText').innerText = muted ? 'ปิดเสียง' : 'เปิดเสียง';
+    });
+
+    // --- Game Stages Data ---
+    const STAGE_DATA = [
+      {
+        stage: 1,
+        title: "ด่านที่ 1: การเติมน้ำเพื่อการเจริญเติบโต (Hydration)",
+        badge: "ด่านที่ 1",
+        hint: "หันหน้าไปทาง <span class='text-cyan-400 font-bold'>ซ้าย</span> เพื่อเพิ่มระดับน้ำให้พืชถึง 80% ขึ้นไป",
+        targetGrowth: 30,
+        targetWater: 80,
+        targetSun: 0
+      },
+      {
+        stage: 2,
+        title: "ด่านที่ 2: การสังเคราะห์ด้วยแสง (Photosynthesis)",
+        badge: "ด่านที่ 2",
+        hint: "หันหน้าไปทาง <span class='text-amber-400 font-bold'>ขวา</span> เพื่อเพิ่มแสงแดดให้แก่พืชถึง 80% ขึ้นไป",
+        targetGrowth: 65,
+        targetWater: 0,
+        targetSun: 80
+      },
+      {
+        stage: 3,
+        title: "ด่านที่ 3: สมดุลระบบนิเวศ & ป้องกันแมลง (Ecosystem & Pest Defense)",
+        badge: "ด่านที่ 3",
+        hint: "รักษาระดับน้ำและแสงให้อยู่ใน <span class='text-emerald-400 font-bold'>Optimal Zone (40%-80%)</span> หากมีแมลงกินพืช ให้ <span class='text-amber-300 font-bold'>ตั้งหน้าตรง</span> เพื่อเปิดเกราะไล่แมลง!",
+        targetGrowth: 100,
+        targetWater: 50,
+        targetSun: 50
+      }
+    ];
+
+    // Pest Enemy Class
+    class Pest {
+      constructor(canvasWidth, canvasHeight) {
+        this.x = Math.random() < 0.5 ? -30 : canvasWidth + 30;
+        this.y = canvasHeight - 200 + (Math.random() - 0.5) * 100;
+        this.targetX = canvasWidth / 2 + (Math.random() - 0.5) * 80;
+        this.targetY = canvasHeight - 220;
+        this.speed = Math.random() * 1.5 + 1.2;
+        this.size = 22;
+        this.alive = true;
+      }
+
+      update() {
+        const dx = this.targetX - this.x;
+        const dy = this.targetY - this.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist > 5) {
+          this.x += (dx / dist) * this.speed;
+          this.y += (dy / dist) * this.speed;
+        }
+      }
+
+      draw(context) {
+        if (!this.alive) return;
+        context.save();
+        context.translate(this.x, this.y);
+        
+        context.fillStyle = '#ef4444';
+        context.beginPath();
+        context.arc(0, 0, this.size / 2, 0, Math.PI * 2);
+        context.fill();
+
+        context.fillStyle = '#ffffff';
+        context.beginPath();
+        context.arc(-4, -3, 3, 0, Math.PI * 2);
+        context.arc(4, -3, 3, 0, Math.PI * 2);
+        context.fill();
+
+        context.fillStyle = '#000000';
+        context.beginPath();
+        context.arc(-4, -3, 1.5, 0, Math.PI * 2);
+        context.arc(4, -3, 1.5, 0, Math.PI * 2);
+        context.fill();
+
+        context.restore();
+      }
+    }
+
+    // Initialize MediaPipe Face Mesh safely
+    let faceMesh = null;
+    try {
+      if (typeof FaceMesh !== 'undefined') {
+        faceMesh = new FaceMesh({
+          locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
+        });
+
+        faceMesh.setOptions({
+          maxNumFaces: 1,
+          refineLandmarks: true,
+          minDetectionConfidence: 0.5,
+          minTrackingConfidence: 0.5
+        });
+
+        faceMesh.onResults(onFaceMeshResults);
+      }
+    } catch(err) {
+      console.warn("MediaPipe FaceMesh initialization fallback:", err);
+    }
+
+    function onFaceMeshResults(results) {
+      const now = performance.now();
+      frameCount++;
+      if (now - lastFrameTime >= 1000) {
+        fps = frameCount;
+        frameCount = 0;
+        lastFrameTime = now;
+        document.getElementById('fpsCounter').innerHTML = `<i class="fa-solid fa-gauge"></i> FPS: ${fps}`;
+      }
+
+      if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
+        latestFaceLandmarks = results.multiFaceLandmarks[0];
+
+        const nose = latestFaceLandmarks[1];
+        const leftCheek = latestFaceLandmarks[234];
+        const rightCheek = latestFaceLandmarks[454];
+
+        if (nose && leftCheek && rightCheek) {
+          const distToLeft = Math.sqrt(Math.pow(nose.x - leftCheek.x, 2) + Math.pow(nose.y - leftCheek.y, 2));
+          const distToRight = Math.sqrt(Math.pow(nose.x - rightCheek.x, 2) + Math.pow(nose.y - rightCheek.y, 2));
+
+          const ratio = distToLeft / (distToLeft + distToRight);
+
+          if (!manualOverride) {
+            if (ratio < 0.38) {
+              currentAction = 'LEFT';
+            } else if (ratio > 0.62) {
+              currentAction = 'RIGHT';
+            } else {
+              currentAction = 'CENTER';
+            }
+          }
+        }
+      } else {
+        latestFaceLandmarks = null;
+        if (!manualOverride) {
+          currentAction = manualAction;
+        }
+      }
+    }
+
+    // Manual Fallback Button Events
+    document.getElementById('btnLeft').addEventListener('click', () => setManualAction('LEFT'));
+    document.getElementById('btnCenter').addEventListener('click', () => setManualAction('CENTER'));
+    document.getElementById('btnRight').addEventListener('click', () => setManualAction('RIGHT'));
+
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowLeft') setManualAction('LEFT');
+      if (e.key === 'ArrowRight') setManualAction('RIGHT');
+      if (e.key === 'ArrowDown' || e.key === ' ') setManualAction('CENTER');
+    });
+
+    function setManualAction(act) {
+      manualOverride = true;
+      manualAction = act;
+      currentAction = act;
+      document.getElementById('modeBadge').innerHTML = `<i class="fa-solid fa-keyboard"></i> Manual Control Mode`;
+    }
+
+    function renderVirtualBackground() {
+      // Sleek animated procedural lab backdrop if webcam is unavailable in iframe
+      const grad = ctx.createLinearGradient(0, 0, 0, canvas.height);
+      grad.addColorStop(0, '#0f172a');
+      grad.addColorStop(0.5, '#0284c7');
+      grad.addColorStop(1, '#052e16');
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      // Grid lines pattern
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
+      ctx.lineWidth = 1;
+      for (let x = 0; x < canvas.width; x += 40) {
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, canvas.height);
+        ctx.stroke();
+      }
+    }
+
+    function renderPlantAndEnvironment() {
+      const centerX = canvas.width / 2;
+      const bottomY = canvas.height - 110;
+
+      // Draw Soil Pot Base
+      ctx.save();
+      const potWidth = Math.min(canvas.width * 0.28, 200);
+      const potHeight = 65;
+
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
+      ctx.beginPath();
+      ctx.ellipse(centerX, bottomY + 5, potWidth / 2 + 15, 18, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      const potGrad = ctx.createLinearGradient(centerX - potWidth / 2, bottomY - potHeight, centerX + potWidth / 2, bottomY);
+      potGrad.addColorStop(0, '#854d0e');
+      potGrad.addColorStop(0.5, '#78350f');
+      potGrad.addColorStop(1, '#451a03');
+
+      ctx.fillStyle = potGrad;
+      ctx.beginPath();
+      ctx.moveTo(centerX - potWidth / 2, bottomY - potHeight);
+      ctx.lineTo(centerX + potWidth / 2, bottomY - potHeight);
+      ctx.lineTo(centerX + potWidth / 2.6, bottomY);
+      ctx.lineTo(centerX - potWidth / 2.6, bottomY);
+      ctx.closePath();
+      ctx.fill();
+
+      ctx.strokeStyle = '#a16207';
+      ctx.lineWidth = 3;
+      ctx.stroke();
+
+      ctx.fillStyle = '#291002';
+      ctx.beginPath();
+      ctx.ellipse(centerX, bottomY - potHeight, potWidth / 2, 16, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Dynamic Plant Stem & Leaves
+      const maxStemHeight = Math.min(canvas.height * 0.38, 280);
+      const currentStemHeight = Math.max(15, (plantGrowth / 100) * maxStemHeight);
+
+      let plantColor = '#22c55e';
+      if (waterLevel < 15 || sunLevel < 15) {
+        plantColor = '#84cc16';
+      } else if (waterLevel < 10 || sunLevel < 10) {
+        plantColor = '#a1a1aa';
+      } else if (waterLevel >= 35 && waterLevel <= 85 && sunLevel >= 35 && sunLevel <= 85) {
+        plantColor = '#10b981';
+      }
+
+      ctx.strokeStyle = plantColor;
+      ctx.lineWidth = Math.max(8, (plantGrowth / 100) * 18);
+      ctx.lineCap = 'round';
+
+      const sway = Math.sin(performance.now() / 500) * 10;
+      ctx.beginPath();
+      ctx.moveTo(centerX, bottomY - potHeight);
+      ctx.quadraticCurveTo(
+        centerX + sway, 
+        bottomY - potHeight - currentStemHeight / 2, 
+        centerX + sway * 0.5, 
+        bottomY - potHeight - currentStemHeight
+      );
+      ctx.stroke();
+
+      // Draw Leaves
+      const leafCount = Math.max(2, Math.floor((plantGrowth / 100) * 8));
+      for (let i = 1; i <= leafCount; i++) {
+        const progressRatio = i / (leafCount + 1);
+        const leafY = bottomY - potHeight - (currentStemHeight * progressRatio);
+        const side = i % 2 === 0 ? 1 : -1;
+        const leafSize = 18 + (i * 3.5);
+
+        ctx.fillStyle = plantColor;
+        ctx.beginPath();
+        ctx.ellipse(
+          centerX + (side * leafSize * 0.8) + (sway * progressRatio), 
+          leafY, 
+          leafSize, 
+          leafSize / 2.2, 
+          (side * Math.PI) / 5, 
+          0, 
+          Math.PI * 2
+        );
+        ctx.fill();
+
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(centerX + (sway * progressRatio), leafY);
+        ctx.lineTo(centerX + (side * leafSize * 1.4) + (sway * progressRatio), leafY);
+        ctx.stroke();
+      }
+
+      // Draw Blooming Flower at High Growth (> 75%)
+      if (plantGrowth >= 75) {
+        const flowerY = bottomY - potHeight - currentStemHeight;
+        const flowerX = centerX + sway * 0.5;
+        
+        ctx.fillStyle = '#f43f5e';
+        for (let p = 0; p < 6; p++) {
+          const angle = (p * Math.PI) / 3 + (performance.now() / 2000);
+          const px = flowerX + Math.cos(angle) * 20;
+          const py = flowerY + Math.sin(angle) * 20;
+          ctx.beginPath();
+          ctx.arc(px, py, 14, 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+        ctx.fillStyle = '#f59e0b';
+        ctx.beginPath();
+        ctx.arc(flowerX, flowerY, 14, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      ctx.restore();
+    }
+
+    function updateGameLogic() {
+      if (!isGameRunning || isStageTransitioning) return;
+
+      const currentStage = STAGE_DATA[currentStageIndex];
+
+      waterLevel = Math.max(0, waterLevel - 0.05);
+      sunLevel = Math.max(0, sunLevel - 0.05);
+
+      if (currentAction === 'LEFT') {
+        waterLevel = Math.min(100, waterLevel + 0.35);
+        if (Math.random() < 0.2) audioSys.playWaterSFX();
+        if (Math.random() < 0.6) {
+          particles.push(new Particle(canvas.width / 2 - 40 + Math.random() * 80, 80, 'WATER'));
+        }
+      } else if (currentAction === 'RIGHT') {
+        sunLevel = Math.min(100, sunLevel + 0.35);
+        if (Math.random() < 0.2) audioSys.playSunSFX();
+        if (Math.random() < 0.6) {
+          particles.push(new Particle(canvas.width / 2 - 40 + Math.random() * 80, 80, 'SUN'));
+        }
+      } else if (currentAction === 'CENTER' && currentStage.stage === 3) {
+        for (let i = pests.length - 1; i >= 0; i--) {
+          const p = pests[i];
+          const distToCenter = Math.sqrt(Math.pow(p.x - canvas.width / 2, 2) + Math.pow(p.y - (canvas.height - 220), 2));
+          if (distToCenter < 180) {
+            audioSys.playZapSFX();
+            for (let k = 0; k < 6; k++) {
+              particles.push(new Particle(p.x, p.y, 'SPARKLE'));
+            }
+            pests.splice(i, 1);
+            score += 25;
+          }
+        }
+      }
+
+      if (currentStage.stage === 3) {
+        pestSpawnTimer++;
+        if (pestSpawnTimer > 180 && pests.length < 3) {
+          pests.push(new Pest(canvas.width, canvas.height));
+          pestSpawnTimer = 0;
+        }
+
+        let bugsAttacking = false;
+        pests.forEach(p => {
+          p.update();
+          const distToPlant = Math.sqrt(Math.pow(p.x - canvas.width / 2, 2) + Math.pow(p.y - (canvas.height - 220), 2));
+          if (distToPlant < 45) {
+            bugsAttacking = true;
+            plantGrowth = Math.max(0, plantGrowth - 0.05);
+          }
+        });
+
+        const hintText = document.getElementById('hintText');
+        if (bugsAttacking) {
+          hintText.innerHTML = "🚨 <span class='text-rose-400 font-bold animate-pulse'>แมลงกำลังกินพืช! ตั้งหน้าตรงเพื่อเปิดเกราะป้องกัน!</span> 🚨";
+        } else if (pests.length > 0) {
+          hintText.innerHTML = "🐛 มีแมลงใกล้เข้ามา! <span class='text-amber-300 font-bold'>ตั้งหน้าตรง</span> เพื่อเปิดเกราะสนามพลังไล่แมลง";
+        }
+      }
+
+      if (currentStage.stage === 1) {
+        if (waterLevel >= 30) {
+          plantGrowth = Math.min(35, plantGrowth + 0.08);
+          score += 1;
+        }
+      } else if (currentStage.stage === 2) {
+        if (sunLevel >= 30) {
+          plantGrowth = Math.min(70, plantGrowth + 0.08);
+          score += 1;
+        }
+      } else {
+        const isWaterOptimal = waterLevel >= 40 && waterLevel <= 80;
+        const isSunOptimal = sunLevel >= 40 && sunLevel <= 80;
+
+        document.getElementById('waterCard').className = isWaterOptimal ? 'glass-panel rounded-2xl p-4 flex flex-col gap-2 max-w-xs transition-all duration-300 neon-border-blue' : 'glass-panel rounded-2xl p-4 flex flex-col gap-2 max-w-xs transition-all duration-300';
+        document.getElementById('sunCard').className = isSunOptimal ? 'glass-panel rounded-2xl p-4 flex flex-col gap-2 max-w-xs justify-self-end transition-all duration-300 neon-border-yellow' : 'glass-panel rounded-2xl p-4 flex flex-col gap-2 max-w-xs justify-self-end transition-all duration-300';
+
+        if (isWaterOptimal && isSunOptimal) {
+          plantGrowth = Math.min(100, plantGrowth + 0.1);
+          score += Math.floor(2 * combo);
+
+          comboTimer++;
+          if (comboTimer > 60) {
+            combo = Math.min(5, combo + 1);
+            comboTimer = 0;
+          }
+
+          if (Math.random() < 0.3) {
+            particles.push(new Particle(canvas.width / 2 + (Math.random() - 0.5) * 60, canvas.height / 2, 'SPARKLE'));
+          }
+        }
+      }
+
+      document.getElementById('waterBar').style.width = `${waterLevel}%`;
+      document.getElementById('waterValue').innerText = `${Math.floor(waterLevel)}%`;
+      document.getElementById('sunBar').style.width = `${sunLevel}%`;
+      document.getElementById('sunValue').innerText = `${Math.floor(sunLevel)}%`;
+      document.getElementById('growthBar').style.width = `${plantGrowth}%`;
+      document.getElementById('growthValue').innerText = `${Math.floor(plantGrowth)}%`;
+
+      document.getElementById('scoreDisplay').innerText = score;
+      document.getElementById('comboDisplay').innerText = `x${combo}`;
+
+      const dirText = document.getElementById('directionText');
+      if (currentAction === 'LEFT') {
+        dirText.innerText = 'หันซ้าย (กำลังรดน้ำ 💧)';
+        dirText.className = 'text-cyan-400 font-bold';
+      } else if (currentAction === 'RIGHT') {
+        dirText.innerText = 'หันขวา (กำลังส่องแสง ☀️)';
+        dirText.className = 'text-amber-400 font-bold';
+      } else {
+        dirText.innerText = currentStageIndex === 2 ? 'ตั้งหน้าตรง (โล่ป้องกันแมลง 🛡️)' : 'หน้าตรง (หยุดพัก 🌿)';
+        dirText.className = 'text-emerald-400 font-semibold';
+      }
+
+      let stagePassed = false;
+      if (currentStage.stage === 1 && waterLevel >= currentStage.targetWater && plantGrowth >= currentStage.targetGrowth) {
+        stagePassed = true;
+      } else if (currentStage.stage === 2 && sunLevel >= currentStage.targetSun && plantGrowth >= currentStage.targetGrowth) {
+        stagePassed = true;
+      } else if (currentStage.stage === 3 && plantGrowth >= currentStage.targetGrowth) {
+        stagePassed = true;
+      }
+
+      if (stagePassed) {
+        audioSys.playFanfare();
+        if (currentStageIndex < STAGE_DATA.length - 1) {
+          triggerStageClearNotification(currentStageIndex);
+        } else {
+          completeGame();
+        }
+      }
+    }
+
+    function triggerStageClearNotification(completedIndex) {
+      isStageTransitioning = true;
+      const banner = document.getElementById('stageClearBanner');
+      const title = document.getElementById('stageClearTitle');
+      const desc = document.getElementById('stageClearDesc');
+
+      if (completedIndex === 0) {
+        title.innerText = "🎉 ผ่านด่านที่ 1 แล้ว!";
+        desc.innerText = "คุณเติมน้ำให้พืชจนได้รับความชุ่มชื้นเพียงพอแล้ว!";
+      } else if (completedIndex === 1) {
+        title.innerText = "🎉 ผ่านด่านที่ 2 แล้ว!";
+        desc.innerText = "คุณป้อนแสงแดดให้พืชสังเคราะห์ด้วยแสงเรียบร้อยแล้ว!";
+      }
+
+      banner.classList.remove('scale-0', 'opacity-0');
+      banner.classList.add('scale-100', 'opacity-100');
+
+      setTimeout(() => {
+        banner.classList.remove('scale-100', 'opacity-100');
+        banner.classList.add('scale-0', 'opacity-0');
+
+        currentStageIndex++;
+        loadStage(currentStageIndex);
+        isStageTransitioning = false;
+      }, 2500);
+    }
+
+    function loadStage(index) {
+      const stage = STAGE_DATA[index];
+      document.getElementById('stageBadge').innerText = stage.badge;
+      document.getElementById('stageTitle').innerText = stage.title;
+      document.getElementById('hintText').innerHTML = stage.hint;
+      pests = [];
+    }
+
+    function startTimer() {
+      if (gameTimerInterval) clearInterval(gameTimerInterval);
+      gameTimeSeconds = 0;
+      gameTimerInterval = setInterval(() => {
+        if (isGameRunning && !isStageTransitioning) {
+          gameTimeSeconds++;
+          const mins = String(Math.floor(gameTimeSeconds / 60)).padStart(2, '0');
+          const secs = String(gameTimeSeconds % 60).padStart(2, '0');
+          document.getElementById('timerDisplay').innerText = `${mins}:${secs}`;
+        }
+      }, 1000);
+    }
+
+    function completeGame() {
+      isGameRunning = false;
+      if (gameTimerInterval) clearInterval(gameTimerInterval);
+      audioSys.playFanfare();
+      document.getElementById('finalScore').innerText = score;
+      const mins = String(Math.floor(gameTimeSeconds / 60)).padStart(2, '0');
+      const secs = String(gameTimeSeconds % 60).padStart(2, '0');
+      document.getElementById('finalTime').innerText = `${mins}:${secs}`;
+      document.getElementById('endModal').classList.remove('hidden');
+    }
+
+    function gameLoop() {
+      ctx.save();
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      if (hasCameraAccess && videoElement && videoElement.readyState === 4) {
+        ctx.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
+      } else {
+        renderVirtualBackground();
+      }
+
+      if (latestFaceLandmarks && typeof drawConnectors !== 'undefined' && typeof FACEMESH_TESSELATION !== 'undefined') {
+        drawConnectors(ctx, latestFaceLandmarks, FACEMESH_TESSELATION, { color: 'rgba(16, 185, 129, 0.15)', lineWidth: 0.5 });
+        drawConnectors(ctx, latestFaceLandmarks, FACEMESH_FACE_OVAL, { color: 'rgba(6, 182, 212, 0.4)', lineWidth: 1 });
+      }
+
+      renderPlantAndEnvironment();
+
+      if (currentStageIndex === 2) {
+        if (currentAction === 'CENTER') {
+          ctx.strokeStyle = 'rgba(52, 211, 153, 0.6)';
+          ctx.lineWidth = 4;
+          ctx.beginPath();
+          ctx.arc(canvas.width / 2, canvas.height - 220, 140, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.fillStyle = 'rgba(52, 211, 153, 0.1)';
+          ctx.fill();
+        }
+
+        pests.forEach(p => p.draw(ctx));
+      }
+
+      for (let i = particles.length - 1; i >= 0; i--) {
+        particles[i].update();
+        particles[i].draw(ctx);
+        if (particles[i].life <= 0) {
+          particles.splice(i, 1);
+        }
+      }
+
+      ctx.restore();
+
+      updateGameLogic();
+
+      requestAnimationFrame(gameLoop);
+    }
+
+    document.getElementById('startBtn').addEventListener('click', async () => {
+      document.getElementById('startModal').classList.add('hidden');
+
+      audioSys.playBGM();
+
+      // Attempt Camera Initialization with Graceful Fallback
+      if (typeof Camera !== 'undefined' && faceMesh) {
+        try {
+          const cameraInstance = new Camera(videoElement, {
+            onFrame: async () => {
+              if (videoElement && isGameRunning) {
+                try {
+                  await faceMesh.send({ image: videoElement });
+                } catch(e) {}
+              }
+            },
+            width: 1280,
+            height: 720
+          });
+          await cameraInstance.start();
+          hasCameraAccess = true;
+        } catch (err) {
+          console.warn('Camera access unavailable or blocked in iframe sandbox. Using virtual lab background.', err);
+          hasCameraAccess = false;
+          document.getElementById('modeBadge').innerHTML = `<i class="fa-solid fa-keyboard"></i> Manual / Interactive Mode`;
+        }
+      } else {
+        hasCameraAccess = false;
+        document.getElementById('modeBadge').innerHTML = `<i class="fa-solid fa-keyboard"></i> Manual / Interactive Mode`;
+      }
+
+      isGameRunning = true;
+      isStageTransitioning = false;
+      currentStageIndex = 0;
+      score = 0;
+      combo = 1;
+      plantGrowth = 0;
+      waterLevel = 30;
+      sunLevel = 30;
+
+      loadStage(0);
+      startTimer();
+      requestAnimationFrame(gameLoop);
+    });
+
+    document.getElementById('restartBtn').addEventListener('click', () => {
+      document.getElementById('endModal').classList.add('hidden');
+      audioSys.playBGM();
+      isGameRunning = true;
+      isStageTransitioning = false;
+      currentStageIndex = 0;
+      score = 0;
+      combo = 1;
+      plantGrowth = 0;
+      waterLevel = 30;
+      sunLevel = 30;
+      loadStage(0);
+      startTimer();
+    });
+
+    // Start background render cycle on page load
+    requestAnimationFrame(gameLoop);
+  </script>
+</body>
+</html>
